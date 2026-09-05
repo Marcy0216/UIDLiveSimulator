@@ -1,2 +1,4 @@
-import Simulator from './simulator';
-export default function Home(){return <Simulator/>}
+import Simulator from "./simulator";
+export default function Home() {
+  return <Simulator />;
+}

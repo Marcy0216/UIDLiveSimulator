@@ -1,6 +1,292 @@
-'use client';
-import {FormEvent,useMemo,useState} from 'react';
-type Item={id:string;name:string;lv:number;chance:number};type Result=Item&{uid:number;rarity:'Mythical'|'Legendary';rollLv:number};
-class DotNetRandom{private seed=new Int32Array(56);private inext=0;private inextp=21;constructor(value:number){const sub=value===-2147483648?2147483647:Math.abs(value);let mj=161803398-sub;if(mj<0)mj+=2147483647;this.seed[55]=mj;let mk=1;for(let i=1;i<55;i++){const ii=21*i%55;this.seed[ii]=mk;mk=mj-mk;if(mk<0)mk+=2147483647;mj=this.seed[ii]}for(let k=1;k<5;k++)for(let i=1;i<56;i++){this.seed[i]-=this.seed[1+(i+30)%55];if(this.seed[i]<0)this.seed[i]+=2147483647}}next(max:number){if(max<=0)return 0;if(++this.inext>=56)this.inext=1;if(++this.inextp>=56)this.inextp=1;let value=this.seed[this.inext]-this.seed[this.inextp];if(value===2147483647)value--;if(value<0)value+=2147483647;this.seed[this.inext]=value;return Math.floor(value/2147483647*max)}}
-function predict(uid:number,items:Item[]):Result|null{const random=new DotNetRandom(uid);if(random.next(2)!==0)return null;const rarity=random.next(20)===0?'Mythical':'Legendary';let n=random.next(20);n=random.next(n+1);n=random.next(n+1);n=random.next(n+1);const rollLv=52+n;const pool=items.filter(i=>i.lv<=rollLv);const total=pool.reduce((s,i)=>s+i.chance,0);let roll=random.next(total);const selected=pool.find(i=>(roll-=i.chance)<0);return selected?{...selected,uid,rarity,rollLv}:null}
-export default function Simulator(){const[start,setStart]=useState('1');const[count,setCount]=useState('100000');const[query,setQuery]=useState('');const[selected,setSelected]=useState<Item[]>([]);const[rarity,setRarity]=useState<'All'|'Legendary'|'Mythical'>('All');const[items,setItems]=useState<Item[]>([]);const[results,setResults]=useState<Result[]>([]);const[elapsed,setElapsed]=useState(0);const[error,setError]=useState('');const artifacts=useMemo(()=>results.filter(r=>r.rarity==='Mythical').length,[results]);const suggestions=useMemo(()=>{const q=query.trim().toLowerCase(),chosen=new Set(selected.map(i=>i.id));return !q?[]:items.filter(i=>!chosen.has(i.id)&&(i.name.toLowerCase().includes(q)||i.id.toLowerCase().includes(q))).slice(0,8)},[items,query,selected]);async function getItems(){if(items.length)return items;const data=await fetch(`${process.env.NEXT_PUBLIC_BASE_PATH??''}/eq-items.json`).then(r=>r.json()) as Item[];setItems(data);return data}function addItem(item:Item){setSelected(current=>[...current,item]);setQuery('')}async function run(e:FormEvent){e.preventDefault();setError('');const first=Number(start),amount=Number(count);if(!Number.isInteger(first)||first<1||first>2147483647)return setError('開始UIDは1〜2,147,483,647で指定してください。');if(!Number.isInteger(amount)||amount<1||amount>1000000||first+amount-1>2147483647)return setError('件数は1〜1,000,000、かつUID上限内で指定してください。');if(query.trim())return setError('入力中の装備を候補から選択してください。');const data=await getItems(),ids=new Set(selected.map(i=>i.id));const before=performance.now(),found:Result[]=[];for(let uid=first;uid<first+amount;uid++){const row=predict(uid,data);if(row&&(!ids.size||ids.has(row.id))&&(rarity==='All'||row.rarity===rarity))found.push(row)}setElapsed(performance.now()-before);setResults(found)}return <main><header className="hero"><nav><span className="brand"><i/> UID装備検索</span><span className="beta">試験版</span></nav><div className="hero-copy"><p className="eyebrow">ELIN UID SIMULATOR</p><h1>装備抽選<br/><em>シミュレーター</em></h1><p className="lede">装備とレアリティを選び、条件に合うUIDを検索できます。装備を選ばなければ、すべての装備が対象になります。</p></div></header><section className="workspace"><form onSubmit={run} className="control-panel"><div className="section-label"><span>01</span> 検索条件</div><label>狙う装備<input value={query} onFocus={()=>void getItems()} onChange={e=>setQuery(e.target.value)} placeholder="装備名を入力して追加" autoComplete="off"/></label>{suggestions.length>0&&<div className="suggestions">{suggestions.map(i=><button type="button" key={i.id} onClick={()=>addItem(i)}><span>{i.name||i.id}</span></button>)}</div>}{selected.length>0&&<div className="chips">{selected.map(i=><button type="button" key={i.id} onClick={()=>setSelected(current=>current.filter(x=>x.id!==i.id))}>{i.name||i.id}<span>×</span></button>)}</div>}<label>レアリティ<select value={rarity} onChange={e=>setRarity(e.target.value as typeof rarity)}><option value="All">すべて</option><option value="Legendary">奇跡</option><option value="Mythical">神器</option></select></label><label>開始UID<input value={start} onChange={e=>setStart(e.target.value)} inputMode="numeric"/></label><label>検索するUID数<input value={count} onChange={e=>setCount(e.target.value)} inputMode="numeric"/></label><button type="submit" className="run">検索する <span>→</span></button>{error&&<p className="error">{error}</p>}<p className="hint">最大100万UIDまで検索できます</p></form><div className="result-panel"><div className="section-label"><span>02</span> 検索結果</div><div className="stats"><article><b>{results.length.toLocaleString()}</b><small>見つかったUID</small></article><article><b>{artifacts.toLocaleString()}</b><small>神器</small></article><article><b>{elapsed?`${elapsed.toFixed(1)} ms`:'—'}</b><small>検索時間</small></article></div><div className="table-wrap">{results.length===0?<div className="empty"><span>◇</span><p>条件を指定して検索してください</p></div>:<table><thead><tr><th>UID</th><th>レアリティ</th><th>装備</th></tr></thead><tbody>{results.slice(0,5000).map(r=><tr key={r.uid}><td>{r.uid.toLocaleString()}</td><td><mark className={r.rarity.toLowerCase()}>{r.rarity==='Legendary'?'奇跡':'神器'}</mark></td><td><strong>{r.name||r.id}</strong></td></tr>)}</tbody></table>}</div>{results.length>5000&&<p className="limit">先頭5,000件を表示しています</p>}</div></section></main>}
+"use client";
+import { FormEvent, useMemo, useState } from "react";
+type Item = { id: string; name: string; lv: number; chance: number };
+type Result = Item & {
+  uid: number;
+  rarity: "Mythical" | "Legendary";
+  rollLv: number;
+};
+type Pool = { items: Item[]; total: number };
+class DotNetRandom {
+  private seed = new Int32Array(56);
+  private inext = 0;
+  private inextp = 21;
+  constructor(value: number) {
+    const sub = value === -2147483648 ? 2147483647 : Math.abs(value);
+    let mj = 161803398 - sub;
+    if (mj < 0) mj += 2147483647;
+    this.seed[55] = mj;
+    let mk = 1;
+    for (let i = 1; i < 55; i++) {
+      const ii = (21 * i) % 55;
+      this.seed[ii] = mk;
+      mk = mj - mk;
+      if (mk < 0) mk += 2147483647;
+      mj = this.seed[ii];
+    }
+    for (let k = 1; k < 5; k++)
+      for (let i = 1; i < 56; i++) {
+        this.seed[i] -= this.seed[1 + ((i + 30) % 55)];
+        if (this.seed[i] < 0) this.seed[i] += 2147483647;
+      }
+  }
+  next(max: number) {
+    if (max <= 0) return 0;
+    if (++this.inext >= 56) this.inext = 1;
+    if (++this.inextp >= 56) this.inextp = 1;
+    let value = this.seed[this.inext] - this.seed[this.inextp];
+    if (value === 2147483647) value--;
+    if (value < 0) value += 2147483647;
+    this.seed[this.inext] = value;
+    return Math.floor((value / 2147483647) * max);
+  }
+}
+function predict(uid: number, pools: Map<number, Pool>): Result | null {
+  const random = new DotNetRandom(uid);
+  if (random.next(2) !== 0) return null;
+  const rarity = random.next(20) === 0 ? "Mythical" : "Legendary";
+  let n = random.next(20);
+  n = random.next(n + 1);
+  n = random.next(n + 1);
+  n = random.next(n + 1);
+  const rollLv = 52 + n;
+  const pool = pools.get(rollLv)!;
+  let roll = random.next(pool.total);
+  const selected = pool.items.find((i) => (roll -= i.chance) < 0);
+  return selected ? { ...selected, uid, rarity, rollLv } : null;
+}
+export default function Simulator() {
+  const [start, setStart] = useState("1");
+  const [count, setCount] = useState("100000");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Item[]>([]);
+  const [rarity, setRarity] = useState<"All" | "Legendary" | "Mythical">("All");
+  const [items, setItems] = useState<Item[]>([]);
+  const [results, setResults] = useState<Result[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState("");
+  const artifacts = useMemo(
+    () => results.filter((r) => r.rarity === "Mythical").length,
+    [results],
+  );
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase(),
+      chosen = new Set(selected.map((i) => i.id));
+    return !q
+      ? []
+      : items
+          .filter(
+            (i) =>
+              !chosen.has(i.id) &&
+              (i.name.toLowerCase().includes(q) ||
+                i.id.toLowerCase().includes(q)),
+          )
+          .slice(0, 8);
+  }, [items, query, selected]);
+  async function getItems() {
+    if (items.length) return items;
+    const data = (await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/eq-items.json`,
+    ).then((r) => r.json())) as Item[];
+    setItems(data);
+    return data;
+  }
+  function addItem(item: Item) {
+    setSelected((current) => [...current, item]);
+    setQuery("");
+  }
+  async function run(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    const first = Number(start),
+      amount = Number(count);
+    if (!Number.isInteger(first) || first < 1 || first > 2147483647)
+      return setError("開始UIDは1〜2,147,483,647で指定してください。");
+    if (
+      !Number.isInteger(amount) ||
+      amount < 1 ||
+      amount > 10000000 ||
+      first + amount - 1 > 2147483647
+    )
+      return setError("件数は1〜10,000,000、かつUID上限内で指定してください。");
+    if (query.trim())
+      return setError("入力中の装備を候補から選択してください。");
+    const data = await getItems(),
+      ids = new Set(selected.map((i) => i.id)),
+      pools = new Map<number, Pool>();
+    for (let lv = 52; lv <= 71; lv++) {
+      const eligible = data.filter((item) => item.lv <= lv);
+      pools.set(lv, {
+        items: eligible,
+        total: eligible.reduce((sum, item) => sum + item.chance, 0),
+      });
+    }
+    const before = performance.now(),
+      found: Result[] = [];
+    for (let uid = first; uid < first + amount; uid++) {
+      const row = predict(uid, pools);
+      if (
+        row &&
+        (!ids.size || ids.has(row.id)) &&
+        (rarity === "All" || row.rarity === rarity)
+      )
+        found.push(row);
+    }
+    setElapsed(performance.now() - before);
+    setResults(found);
+  }
+  return (
+    <main>
+      <header className="hero">
+        <nav>
+          <span className="brand">
+            <i /> UID装備検索
+          </span>
+          <span className="beta">試験版</span>
+        </nav>
+        <div className="hero-copy">
+          <p className="eyebrow">ELIN UID SIMULATOR</p>
+          <h1>
+            装備抽選
+            <br />
+            <em>シミュレーター</em>
+          </h1>
+          <p className="lede">
+            装備とレアリティを選び、条件に合うUIDを検索できます。装備を選ばなければ、すべての装備が対象になります。
+          </p>
+        </div>
+      </header>
+      <section className="workspace">
+        <form onSubmit={run} className="control-panel">
+          <div className="section-label">
+            <span>01</span> 検索条件
+          </div>
+          <label>
+            狙う装備
+            <input
+              value={query}
+              onFocus={() => void getItems()}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="装備名を入力して追加"
+              autoComplete="off"
+            />
+          </label>
+          {suggestions.length > 0 && (
+            <div className="suggestions">
+              {suggestions.map((i) => (
+                <button type="button" key={i.id} onClick={() => addItem(i)}>
+                  <span>{i.name || i.id}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {selected.length > 0 && (
+            <div className="chips">
+              {selected.map((i) => (
+                <button
+                  type="button"
+                  key={i.id}
+                  onClick={() =>
+                    setSelected((current) =>
+                      current.filter((x) => x.id !== i.id),
+                    )
+                  }
+                >
+                  {i.name || i.id}
+                  <span>×</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <label>
+            レアリティ
+            <select
+              value={rarity}
+              onChange={(e) => setRarity(e.target.value as typeof rarity)}
+            >
+              <option value="All">すべて</option>
+              <option value="Legendary">奇跡</option>
+              <option value="Mythical">神器</option>
+            </select>
+          </label>
+          <label>
+            開始UID
+            <input
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              inputMode="numeric"
+            />
+          </label>
+          <label>
+            検索するUID数
+            <input
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              inputMode="numeric"
+            />
+          </label>
+          <button type="submit" className="run">
+            検索する <span>→</span>
+          </button>
+          {error && <p className="error">{error}</p>}
+          <p className="hint">最大1,000万UIDまで検索できます</p>
+        </form>
+        <div className="result-panel">
+          <div className="section-label">
+            <span>02</span> 検索結果
+          </div>
+          <div className="stats">
+            <article>
+              <b>{results.length.toLocaleString()}</b>
+              <small>見つかったUID</small>
+            </article>
+            <article>
+              <b>{artifacts.toLocaleString()}</b>
+              <small>神器</small>
+            </article>
+            <article>
+              <b>{elapsed ? `${elapsed.toFixed(1)} ms` : "—"}</b>
+              <small>検索時間</small>
+            </article>
+          </div>
+          <div className="table-wrap">
+            {results.length === 0 ? (
+              <div className="empty">
+                <span>◇</span>
+                <p>条件を指定して検索してください</p>
+              </div>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>UID</th>
+                    <th>レアリティ</th>
+                    <th>装備</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.slice(0, 5000).map((r) => (
+                    <tr key={r.uid}>
+                      <td>{r.uid.toLocaleString()}</td>
+                      <td>
+                        <mark className={r.rarity.toLowerCase()}>
+                          {r.rarity === "Legendary" ? "奇跡" : "神器"}
+                        </mark>
+                      </td>
+                      <td>
+                        <strong>{r.name || r.id}</strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {results.length > 5000 && (
+            <p className="limit">先頭5,000件を表示しています</p>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
