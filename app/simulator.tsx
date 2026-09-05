@@ -1,6 +1,6 @@
 "use client";
 import { FormEvent, useMemo, useState } from "react";
-type Item = { id: string; name: string; lv: number; chance: number };
+type Item = { id: string; name: string; lv: number; chance: number; group: "weapon" | "armor" };
 type Result = Item & {
   uid: number;
   rarity: "Mythical" | "Legendary";
@@ -51,9 +51,26 @@ function predict(uid: number, pools: Map<number, Pool>): Result | null {
   n = random.next(n + 1);
   const rollLv = 52 + n;
   const pool = pools.get(rollLv)!;
-  let roll = random.next(pool.total);
-  const selected = pool.items.find((i) => (roll -= i.chance) < 0);
+  const wantedGroup = (["weapon", "armor", "armor"] as const)[random.next(3)];
+  const selectWeighted = () => {
+    let roll = random.next(pool.total);
+    return pool.items.find((item) => (roll -= item.chance) < 0);
+  };
+  let selected: Item | undefined;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const candidate = selectWeighted();
+    if (candidate?.group === wantedGroup) {
+      selected = candidate;
+      break;
+    }
+  }
+  selected ??= selectWeighted();
   return selected ? { ...selected, uid, rarity, rollLv } : null;
+}
+function parseCount(value: string) {
+  const normalized = value.normalize("NFKC").replace(/[,_\s]/g, "");
+  const man = normalized.match(/^(\d+(?:\.\d+)?)万$/);
+  return man ? Number(man[1]) * 10000 : Number(normalized);
 }
 export default function Simulator() {
   const [start, setStart] = useState("1");
@@ -63,12 +80,10 @@ export default function Simulator() {
   const [rarity, setRarity] = useState<"All" | "Legendary" | "Mythical">("All");
   const [items, setItems] = useState<Item[]>([]);
   const [results, setResults] = useState<Result[]>([]);
+  const [matchCount, setMatchCount] = useState(0);
+  const [artifactCount, setArtifactCount] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
-  const artifacts = useMemo(
-    () => results.filter((r) => r.rarity === "Mythical").length,
-    [results],
-  );
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase(),
       chosen = new Set(selected.map((i) => i.id));
@@ -98,8 +113,8 @@ export default function Simulator() {
   async function run(e: FormEvent) {
     e.preventDefault();
     setError("");
-    const first = Number(start),
-      amount = Number(count);
+    const first = Number(start.normalize("NFKC").replace(/[,_\s]/g, "")),
+      amount = parseCount(count);
     if (!Number.isInteger(first) || first < 1 || first > 2147483647)
       return setError("開始UIDは1〜2,147,483,647で指定してください。");
     if (
@@ -123,17 +138,24 @@ export default function Simulator() {
     }
     const before = performance.now(),
       found: Result[] = [];
+    let matches = 0,
+      artifacts = 0;
     for (let uid = first; uid < first + amount; uid++) {
       const row = predict(uid, pools);
       if (
         row &&
         (!ids.size || ids.has(row.id)) &&
         (rarity === "All" || row.rarity === rarity)
-      )
-        found.push(row);
+      ) {
+        matches++;
+        if (row.rarity === "Mythical") artifacts++;
+        if (found.length < 5000) found.push(row);
+      }
     }
     setElapsed(performance.now() - before);
     setResults(found);
+    setMatchCount(matches);
+    setArtifactCount(artifacts);
   }
   return (
     <main>
@@ -142,7 +164,7 @@ export default function Simulator() {
           <span className="brand">
             <i /> UID装備検索
           </span>
-          <span className="beta">試験版</span>
+          <span className="beta">計算版</span>
         </nav>
         <div className="hero-copy">
           <p className="eyebrow">ELIN UID SIMULATOR</p>
@@ -237,11 +259,11 @@ export default function Simulator() {
           </div>
           <div className="stats">
             <article>
-              <b>{results.length.toLocaleString()}</b>
+              <b>{matchCount.toLocaleString()}</b>
               <small>見つかったUID</small>
             </article>
             <article>
-              <b>{artifacts.toLocaleString()}</b>
+              <b>{artifactCount.toLocaleString()}</b>
               <small>神器</small>
             </article>
             <article>
@@ -282,7 +304,7 @@ export default function Simulator() {
               </table>
             )}
           </div>
-          {results.length > 5000 && (
+          {matchCount > 5000 && (
             <p className="limit">先頭5,000件を表示しています</p>
           )}
         </div>
